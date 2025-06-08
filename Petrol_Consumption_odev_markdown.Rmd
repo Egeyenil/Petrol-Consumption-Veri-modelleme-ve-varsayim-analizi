@@ -1,0 +1,374 @@
+---
+title: "Varsayım Analizi Ödevi"
+author: "Ege yenil, Şeref Can Memiş, Emine Nur Kara, İrem Küçükterzi, Kayra Kalkan"
+date: "2025-01-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Petrol Consumption Veri modelleme ve varsayım analizi
+
+Öncelikle gerekli kütüphaneleri aktif hale getirelim
+
+```{r message=FALSE, warning=FALSE}
+library(mice)
+library(caret)
+library(lmtest)
+library(faraway)
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(ggpubr)
+library(ISLR)
+```
+
+## Şimdi Veriyi import edelim ve veri hakkında ön bilgi edinelim
+
+```{r}
+petrol<-read.csv("C:/Users/egeye/Downloads/petrol_consumption.csv")
+names(petrol)
+head(petrol)
+str(petrol)
+nrow(petrol);ncol(petrol)
+```
+
+
+Bir de değişkenler arasındaki korelasyonları inceleyelip fikir edinelim;
+```{r}
+cor(petrol)
+```
+
+## Missing Kontrolü
+```{r}
+md.pattern(petrol)
+```
+Veri içerisinde herhangi bir missing değer gözükmüyor.
+
+# Model Oluşturma
+## öncelikle veriyi Train-Test olarak parçalayalım
+```{r}
+set.seed(100)
+indx<- sample(1:nrow(petrol),size = 0.8*nrow(petrol)) 
+train<- petrol[indx,]
+test<- petrol[-indx,]
+```
+
+
+## Veriyi parçaladık. Şimdi Birkaç farklı şekilde model oluşturalım ve bunları inceleyelim
+```{r}
+names(petrol)
+```
+```{r}
+model1<- lm(Petrol_Consumption~.,data = train)
+summary(model1) 
+```
+Öncelikle Modelin p-value değerine baktığımız zaman 0.05'den küçük yani modelimiz anlamlıdır.
+Bunun yanında $R^2$=0.689 olarak gelmiştir. Değişkenleri incelediğimiz zaman **Paved_Highways** değişkeni anlamsız
+gelmiştir. Bunun dışındaki diğer bağımsız değişkenler modelde anlamlıdır. 
+
+Paved_Highways değişkenini kullanmadan bir model kuralım;
+```{r}
+model2<-lm(Petrol_Consumption~.-Paved_Highways,data = train)
+summary(model2)
+```
+model2 yi incelediğimiz zaman Modelin p-value değeri yine 0.05'den küçüktür yani model anlamlıdır.
+$R^2$=0.6918 olmuştur yani az da olsa artış meydana gelmiştir. Bunun dışında modeldeki bağımsız değişkenleri
+incelediğimizde bütün değişkenler modelde anlamlıdır.
+
+Bir de stepwise regresyon yöntemi ile model kuralım. Bakalım nasıl bir model elde edeceğiz
+```{r}
+model3<- step(lm(Petrol_Consumption~1,data = train),direction = "both",
+              scope = ~Petrol_tax+Average_income+Paved_Highways+Population_Driver_licence...)
+summary(model3)
+```
+model3'ü yani stepwise ile kurduğumuz modeli incelediğimizde, model2 deki gibi sadece Paved_Highways
+değişkenini çıkartarak model kurmuştur. Yani aslında model2 ile aynı model elde edilmiştir.
+
+Bu Durumda elimizde karşılaştırabileceğimiz 2 farklı model mevcut.
+
+## Bu modelleri test verisi üzerinden karşılaştıralım
+```{r}
+prediction1<- predict(model1,test)
+prediction2<- predict(model2,test)
+```
+
+```{r}
+karsilastirma <- data.frame("R2"=c(R2(prediction1, test$Petrol_Consumption),R2(prediction2, test$Petrol_Consumption)),
+                            "RMSE"=c(RMSE(prediction1, test$Petrol_Consumption),RMSE(prediction2, test$Petrol_Consumption)),
+                            "MAE"=c(MAE(prediction1, test$Petrol_Consumption),MAE(prediction2, test$Petrol_Consumption)),
+                            "AIC"=c(AIC(model1, k = 6),AIC(model2, k = 5)),
+                            "BIC"=c(BIC(model1),BIC(model2)))
+row.names(karsilastirma)<- c("model1","model2")
+karsilastirma
+```
+Karşılaştırma metriklerini incelediğimiz zaman MAE dışındaki bütün metrikler model2'nin yani Paved_Highways değişkeninin
+çıkarıldığı modelin daha iyi olduğunu gösteriyor.
+
+
+# Model Varsayım Kontrolleri
+
+## Değişen Varyans Durumu
+```{r}
+plot(model2$fitted.values,model2$residuals,
+     xlab = "fitted",ylab = "residual")
+abline(h=0,col="red")
+```
+
+Bir de matematiksel olarak değişen varyans durumunu kontrol etmek için Breusch-Pagan testini kullanalım;
+```{r}
+bptest(model2,data=petrol)
+```
+H0: hatalarin varyansi sabit
+H1: hatalarin varyansi sabit degil
+
+p-value 0.1003 oldugundan yani 0.05'ten buyuk oldugundan h0'i reddedemeyiz.
+Yani sonuc olarak hatalarin varyansi sabit degisen varyans yok
+
+
+## Hataların Normal dağılımı
+```{r}
+qqnorm(residuals(model2),ylab = "residiual")
+qqline(residuals(model2),col="red")
+hist(residuals(model2))
+```
+Birde shapiro.test ile Kontrol edelim;
+```{r}
+shapiro.test(residuals(model2)) 
+```
+H0: normality var
+H1: normality yok
+
+Testin sonucuna göre p-value değeri 0.017 geldi. Yani 0.05 den küçük olduğu için H0 reddedilir.
+Bunun sonucunda hataların normal dağılımı varsayımı sağlanmıyor.
+
+Histograma ve qq grafiğine baktığımız zaman birkaç tane yüksek değerli aykırı gözlem var. Belki bundan dolayı 
+modelin normalitesi bozuluyor olabilir. Aykırı gözlemleri çıkartıp tekrar bir model kurup bu modeli inceleyelim.
+
+
+## Aykırı Değer Analizi
+
+```{r}
+standardized_residuals <- rstandard(model2)
+summary(standardized_residuals)
+```
+
+
+Cook's Distance
+Öncelikle distance değerlerini bulup daha sonra hangi noktadan itibaren aykırı değer olarak alacağımızı belirleyelim
+
+```{r}
+dist<-cooks.distance(model2)
+olcut1<- mean(dist)*3
+olcut2<-4/length(dist)
+olcut1;olcut2
+```
+```{r}
+olcut1Index<-which(dist>olcut1)
+olcut2Index<-which(dist>olcut2)
+length(olcut1Index)
+length(olcut2Index)
+```
+ölçüt1'e göre 4 aykırı değer, ölçüt2'ye göre 3 aykırı değer vardır. Verimizin boyutu çok büyük olmadığından dolayı
+ölçüt2 ile yolumuza devam edelim.
+
+Görsel olarak inclemek istersek;
+```{r}
+plot(1:length(dist),dist,type='p',ylim=range(dist)*c(1,1))
+abline(h=olcut2,col='red')
+```
+
+Aykırı Değerler tespit ettik. Şimdi bunları trainset içerisinden çıkartarak yeni trainset'imizi elde edelim
+```{r}
+outliers <- which(dist>olcut2 & 
+  abs(standardized_residuals)>2)
+trainsetrem <- train[-outliers,]
+nrow(train); nrow(trainsetrem)
+```
+
+## Aykırıları çıkardıktan sonra tekrar model kuralım
+```{r}
+names(trainsetrem)
+```
+```{r}
+model2rem<- lm(Petrol_Consumption~.-Paved_Highways,data = trainsetrem)
+summary(model2rem)
+```
+Aykırıları Çıkardıktan sonra kurduğumuz model2rem, p-value değerine baktığımız zaman model anlamlı gelmiştir.
+$R^2$=0.7306 olmuştur. Yani aykırıları çıkardıktan sonra modelin $R^2$ değeri artmıştır. Bağımsız değişkenler
+önceki modeldeki gibi anlamlı gelmiştir.
+
+Birde yeni elde ettiğimiz model2rem'i bir önceki model2 ile test üzerinden karşılaştıralım.
+
+```{r}
+prediction2<- predict(model2,test)
+prediction3<- predict(model2rem,test)
+```
+```{r}
+karsilastirma <- data.frame("R2"=c(R2(prediction2, test$Petrol_Consumption),R2(prediction3, test$Petrol_Consumption)),
+                            "RMSE"=c(RMSE(prediction2, test$Petrol_Consumption),RMSE(prediction3, test$Petrol_Consumption)),
+                            "MAE"=c(MAE(prediction2, test$Petrol_Consumption),MAE(prediction3, test$Petrol_Consumption)),
+                            "AIC"=c(AIC(model2, k = 5),AIC(model2rem, k = 5)),
+                            "BIC"=c(BIC(model2),BIC(model2rem)))
+row.names(karsilastirma)<- c("model2","model2rem")
+karsilastirma
+```
+Modelleri test üzerinden karşılaştırdığımız zaman aykırıların çıkarıldığı modelin gözle görülür bir şekilde
+performansının artığını söyleyebiliriz.
+
+Şimdi en son elde ettiğimiz modelin varsayımlarını kontrol edelim.
+
+
+# Yeni Modelin Varsayım Kontrolü
+
+## Değişen Varyans Kontrolü
+```{r}
+plot(model2rem$fitted.values,model2rem$residuals,
+     xlab = "fitted",ylab = "residual")
+abline(h=0,col="red")
+```
+Grafiği incelediğimiz zaman değişen varyans durumu yok gibi gözüküyor. Birde Breusch-Pagan testi ile kontrol edelim.
+```{r}
+bptest(model2rem,data=petrol)
+```
+H0: hatalarin varyansi sabit
+H1: hatalarin varyansi sabit degil
+
+p-value 0.05149 yani 0.05 değerinden büyük fakat sınıra çok yakın.
+Değişken dönüşümü uygularsak daha iyi hale gelir mi? inceleyelim.
+
+
+## Değişken dönüşümü uygularak yeni bir model elde edelim
+```{r}
+model2rem1<-lm(log(Petrol_Consumption)~.-Paved_Highways,data = trainsetrem)
+summary(model2rem1)
+```
+Değişken dönüşümü yapılmış model2rem1 modelini incelediğimizde, p-value değeri 0.05'den küçük yani model anlamlıdır.
+Bunun yanında $R^2$=0.76 gelmektedir. Bu $R^2$ değeri en son kullandığımız modelinkinden biraz daha yüksektir.
+
+Değişken dönüşümü uyguladığımız son modeli (model2rem1), bir önceki model ile (model2rem) test üzerinden karşılaştıralım.
+
+```{r}
+prediction3<- predict(model2rem,test)
+prediction4<- predict(model2rem1,test)
+
+rmse_original <- sqrt(mean((test$Petrol_Consumption - exp(prediction4))^2))
+mae_original <- mean(abs(test$Petrol_Consumption - exp(prediction4)))
+```
+```{r}
+karsilastirma <- data.frame("R2"=c(R2(prediction3, test$Petrol_Consumption),R2(prediction4, test$Petrol_Consumption)),
+                            "RMSE"=c(RMSE(prediction3, test$Petrol_Consumption),rmse_original),
+                            "MAE"=c(MAE(prediction3, test$Petrol_Consumption),mae_original))
+row.names(karsilastirma)<- c("model2rem","model2rem1")
+karsilastirma
+
+```
+Modelleri karşılaştırdığımızda Değişken dönüşümü yaptığımız model, dönüşüm yapılmamış halinden daha iyi performans veriyor.
+Sonuç olarak şuan elimizdeki en iyi sonuç veren model; Paved_Highways değişkeninin çıkarılmış, aykırı gözlemlerden arındırılmış
+ve bağımlı değişkene değişken dönüşümü yapılmış modeldir.
+
+Şimdi Bu model üzerinden tekrardan varsayım kontrolüne geçelim.
+
+
+# "Model2rem1" modeli üzerinden Varsayım Kontrolü
+
+## Değişen Varyans Kontrolü
+```{r}
+plot(model2rem1$fitted.values,model2rem1$residuals,
+     xlab = "fitted",ylab = "residual")
+abline(h=0,col="red")
+```
+Grafik üzerinden incelediğimiz zaman değişen varyans durumu yok gibi duruyor. Birde  Breusch-Pagan testini kullanalım
+```{r}
+bptest(model2rem1,data = petrol) 
+```
+H0: hatalarin varyansi sabit
+H1: hatalarin varyansi sabit degil
+
+p-value 0.5125 yani 0.05 değerinden büyük. Yani H0'ı reddediyoruz. Dolayısıyla değişen varyans durumu yoktur.
+
+
+## Hataların Normal dağılımı
+```{r}
+qqnorm(residuals(model2rem1),ylab = "residiual")
+qqline(residuals(model2rem1),col="red")
+hist(residuals(model2rem1))
+```
+Grafiği ve histogramı incelediğimizde normal dağılım varsayımı sağlanıyor gibi gözüküyor.
+Birde shapiro.test ile bu durumu Kontrol edelim;
+```{r}
+shapiro.test(residuals(model2rem1)) 
+```
+H0: normality var
+H1: normality yok
+
+Testin sonucuna göre p-value değeri 0.5707 geldi. Yani 0.05'den büyük olduğu için H0 reddedilir.
+Bu durumda hatalar normal dağılıyordur.
+
+
+## Hataların ilişkisiz olması durumu kontrolu
+```{r}
+n<- length(residuals(model2rem1))
+plot(tail(residuals(model2rem1),n-1),head(residuals(model2rem1),n-1),
+     xlab = expression(hat(epsilon)[i]),ylab=expression(hat(epsilon)[i-1]))
+abline(h=0,col="red")
+```
+
+Grafik üzerinden yorumlarsak hataların herhangi bir ilişkisi gözükmüyordur.
+Bu yorumu desteklemek için Durbin-Watson testi ile inceleyelim;
+```{r}
+dwtest(model2rem1,data = petrol) 
+```
+H0: hatalar araindaki otokorelasyon=0 yani hatalar iliskisiz
+H1: hatalar arasindaki otokorelasyon!=0 yani hatalar ilişkili
+
+DW 2'ye yakınsa otokorelasyon yok (ilişki yok)
+DW > 2 negatif otokorelasyon
+DW < 2 pozitif otokorelasyon
+
+p-value değerine ve dw değerine baktığımız zaman hataların birbiriyle ilişkisiz olduğunu söyleyebiliriz.
+
+
+## multicolinearity Kontrolü
+
+Öncelikle bağımsız değişkenler arasındaki korelasyonlara bakarak bir fikir edinelim
+```{r}
+modelData<-petrol[c("Petrol_tax","Average_income","Population_Driver_licence...","Petrol_Consumption")]
+cor(modelData)
+```
+Korelasyonları incelediğimizde göze batan yüksek korelasyon değeri gözükmemektedir. 
+Birde vif değerleri üzerinden inceleyelim;
+```{r}
+vif(model2rem1)
+```
+
+Bütün vif değerleri 10'dan küçüktür. Sonuç olarak herhangi bir multicolinearity problemi yoktur.
+
+
+
+
+
+## NİHAİ SONUÇ
+
+Sonuç olarak Petrol_Consumption verimizin Nihai modeli olarak Model2rem1 yani Paved_Highway değişkeni çıkartılmış, Aykırı değerlerden arındırılmış ve bağımlı değişkenimize değişken dönüşümü uygulanmış modele
+karar verdik. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
